@@ -15,6 +15,7 @@ import webbrowser
 from scipy import stats
 import seaborn as sns
 import numpy as np
+from matplotlib.lines import Line2D
 
 #Globals
 axis_text_size = 24
@@ -75,18 +76,20 @@ def Grouped_charge_histogram(df):
 
     for charge,slope in df_bycharge:
 
-
-        hist = ax.hist(slope['Slope'], bins=100, range=None, histtype='step', align='mid', orientation='vertical', rwidth=None, label="+{0}".format(slope['Charge'].max()),
+        ch = slope['Charge'].max()
+        hist = ax.hist(slope['Slope'], bins=100, range=None, histtype='step', align='mid', orientation='vertical', rwidth=None, label="+{0}".format(ch),
             log=False, stacked=False)
+
 
         max_y = max(hist[0])
         for j in range(len(hist[0])):
             if hist[0][j] == max_y:
                 max_x = hist[1][j]
 
+        slope_from_Charge = dict_stats['total']['intercept_grand'] + dict_stats['total']['slope_grand'] * ch
+        ax.vlines(slope_from_Charge,0,max_y,'r')
 
-
-
+        ax.vlines(np.mean(slope['Slope']),0,max_y )
         ax.text(max_x,max_y,"+{0}".format(slope['Charge'].max()))
 
 
@@ -95,12 +98,46 @@ def Grouped_charge_histogram(df):
     ax.set_ylabel("Frequency",fontsize=axis_text_size)
     ax.tick_params(axis='y',labelsize= tick_text_size)
     ax.tick_params(axis='x',  labelsize=tick_text_size)
-    #ax.legend()
-
+    customlegend = [Line2D([0],[0],color='black',lw=4),Line2D([0],[0],color='red',lw=4)]
+    ax.legend(customlegend,["Mean","From Regression"])
 
     app.queueFunction(app.refreshPlot, "p1")
 
 
+
+def Grouped_charge_histogram_norm(df):
+    # Let's make a plot
+    fig.clf()
+    ax = fig.add_subplot()
+
+    df_bycharge = df.groupby(["Charge"])
+
+
+    for charge,slope in df_bycharge:
+
+
+        hist = ax.hist(slope['Slope'], bins=100, range=None, density=True, histtype='step', align='mid', orientation='vertical', rwidth=None, label="+{0}".format(slope['Charge'].max()),
+            log=False, stacked=True)
+
+        max_y = max(hist[0])
+        for j in range(len(hist[0])):
+            if hist[0][j] == max_y:
+                max_x = hist[1][j]
+
+
+
+        ax.text(max_x,max_y,"+{0}".format(slope['Charge'].max()))
+
+
+    ax.set_title("Charge Grouped Observations Histogram \n- Normalized by Sum",fontsize=title_text_size)
+    ax.set_xlabel("Slope",fontsize=axis_text_size)
+    ax.set_ylabel("Frequency",fontsize=axis_text_size)
+    ax.tick_params(axis='y',labelsize= tick_text_size)
+    ax.tick_params(axis='x',  labelsize=tick_text_size)
+    #ax.legend()
+
+
+    app.queueFunction(app.refreshPlot, "p1")
 
 def nice_histogram(df):
     # Let's make a plot
@@ -389,13 +426,17 @@ def treeclick(title,atr):
             print(selected[0])
             app.thread(Grouped_charge_histogram, df)
 
+        if selected[0] == "Grouped_charge_histogram_norm":
+            print(selected[0])
+            app.thread(Grouped_charge_histogram_norm, df)
+
         if selected[0] == "twoDHistogram":
 
             app.thread(twoDhist, df)
 
 def openTree(xml):
 
-    with app.frame("Left", row=0, column=0,sticky='nw'):
+    with app.frame("Left", row=0, column=0):
 
         app.tree("tree1", xml, dbl=treeclick, editable=False)
 
@@ -453,7 +494,7 @@ def load_data(basepath):
     xml = """
             <{0}>
             <Histograms><Grouped_charge_histogram></Grouped_charge_histogram>
-            <twoDHistogram></twoDHistogram></Histograms>
+            <twoDHistogram></twoDHistogram><Grouped_charge_histogram_norm></Grouped_charge_histogram_norm></Histograms>
             {2}
             <ChargeVsSlope></ChargeVsSlope>
             <Mean_Vs_std></Mean_Vs_std>
@@ -546,9 +587,11 @@ if __name__ == '__main__':
 
 
     # Create Empty matplotlib plot
-    with app.frame("Right", row=0, column=1,sticky="news", colspan=6, stretch='both'):
+    with app.frame("Right", row=0, column=1,colspan=5,sticky='nwse',stretch='both'):
 
-        fig = app.addPlotFig("p1", showNav=True,colspan=6)
+        fig = app.addPlotFig("p1", showNav=True)
+
+
 
 
 
@@ -560,6 +603,7 @@ if __name__ == '__main__':
 
     #Plot Customization
     app.startSubWindow("plot_custom","Plot Customisation")
+
     app.addLabelEntry("Title Font Size")
     app.addLabelEntry("Axis Font Size")
     app.addLabelEntry("Tick Font Size")
