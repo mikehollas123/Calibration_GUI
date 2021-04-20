@@ -5,6 +5,7 @@
 
 # Imports
 import os, sys
+import time
 import csv
 from appJar import gui
 import pandas as pd
@@ -16,12 +17,56 @@ from scipy import stats
 import seaborn as sns
 import numpy as np
 from matplotlib.lines import Line2D
+from scipy.stats import norm
+
 
 #Globals
 axis_text_size = 24
 tick_text_size = 20
 title_text_size = 24
 line_width = 1
+
+class Mikes_CI_and_PI_calc:
+
+    def __init__(self, X, Y):
+        import numpy as np
+        import scipy
+        x = np.array(X)
+        y = np.array(Y)
+        n = len(x)
+        M = x[:, np.newaxis] ** [0, 1]  # Linear regression
+        reg, R, a, b = scipy.linalg.lstsq(M, Y)  # least squares fitting
+        self.Intercept, self.Slope = reg
+
+        y_prime = x * self.Slope + self.Intercept
+        var = y - y_prime
+        var_sq = var * var
+        s_est = np.sqrt(sum(var_sq) / y.size - 2)
+
+        x_minus_xmean = x - np.mean(x)
+        sum_x2 = sum(x_minus_xmean * x_minus_xmean)
+
+        self.Standard_error = s_est / np.sqrt(sum_x2)
+
+        self.t_value = scipy.stats.t.ppf(0.95, n- 1)
+
+        """Confidence Interval for the Slope
+        lower limit: slope - (t.95)(sb)
+    upper limit: b + (t.95)(sb)
+        """
+        self.CI_plus = self.Slope + self.t_value * self.Standard_error
+        self.CI_minus = self.Slope - self.t_value * self.Standard_error
+        x_pre = np.linspace(x.min(), x.max(), n)
+        x_pre_xminusmean = x_pre - np.mean(x_pre)
+        se_y = s_est * np.sqrt(1 / n + (x_pre_xminusmean * x_pre_xminusmean) / sum(x_pre_xminusmean * x_pre_xminusmean))
+        pre_se_y = s_est * np.sqrt(
+            1 + 1 / n + (x_pre_xminusmean * x_pre_xminusmean) / sum(x_pre_xminusmean * x_pre_xminusmean))
+
+        self.Regression_XY = (x_pre, x_pre * self.Slope + self.Intercept)
+        self.Upper_CI_XY = (x_pre, x_pre * self.Slope + self.Intercept + se_y * self.t_value)
+        self.Lower_CI_XY = (x_pre, x_pre * self.Slope + self.Intercept - se_y * self.t_value)
+        self.Upper_PI_XY = (x_pre, x_pre * self.Slope + self.Intercept + pre_se_y * self.t_value)
+        self.Lower_PI_XY = (x_pre, x_pre * self.Slope + self.Intercept - pre_se_y * self.t_value)
 
 
 def CreateDF(basepath):
@@ -42,10 +87,11 @@ def CreateDF(basepath):
             with open(os.path.join(basepath, entry), newline = '') as calibrations:
                 calibration_reader = csv.DictReader(calibrations, delimiter='\t')
                 for calibration in calibration_reader:
+
+
                     del calibration['Time of Death']
                     del calibration['R Squared']
                     del calibration['Frequency']
-                    del calibration['m/z']
                     del calibration['Intensity']
                     del calibration['Noise']
                     del calibration['Baseline']
@@ -62,9 +108,60 @@ def CreateDF(basepath):
 
     df =  pd.DataFrame(calibration_list)
 
-    df[['Charge', 'Slope']] = df[['Charge', 'Slope']].apply(pd.to_numeric, errors='coerce')
+    df[['Charge', 'Slope','m/z']] = df[['Charge', 'Slope','m/z']].apply(pd.to_numeric, errors='coerce')
 
     return df
+
+def Violin_Slope_dist(df,x_lims=0):
+
+    X = dict_stats['total']['charge']
+    fig.clf()
+    ax = fig.add_subplot()
+
+    if x_lims != 0:
+        ax.set_xlim(min(x_lims),max(x_lims))
+
+    plot_data = Mikes_CI_and_PI_calc(df['Charge'], df['Slope'])
+
+    df_bycharge = df.groupby(["Charge"])
+    data = []
+    pos = []
+    for charge, slope in df_bycharge:
+        ch = slope['Charge'].max()
+        data.append(np.array(slope["Slope"]/1000000))
+        pos.append(ch)
+        mean = np.mean(slope["Slope"]/1000000)
+        quartile1, medians, quartile3 = np.percentile(np.array(slope["Slope"]/1000000), [25, 50, 75], axis=0)
+        ax.vlines(ch,quartile1,quartile3,linewidth=3)
+        ax.scatter(ch, mean, marker='o', color='black',s=50)
+
+    violin_parts = ax.violinplot(data, pos, showmeans=False, showextrema=False, showmedians=False)
+    ax.set_title("Charge Grouped Observations Violin Plot",fontsize=title_text_size)
+    ax.set_xlabel("Charge",fontsize=axis_text_size)
+    ax.set_ylabel("Slope (x$10^6$)",fontsize=axis_text_size)
+    ax.tick_params(axis='y',labelsize= tick_text_size)
+    ax.tick_params(axis='x',  labelsize=tick_text_size)
+    for pc in violin_parts['bodies']:
+        pc.set_color('red')
+        pc.set_edgecolor('red')
+        pc.set_alpha(0.4)
+
+    print(plot_data.Slope,plot_data.Intercept)
+    ax.plot(plot_data.Regression_XY[0],plot_data.Regression_XY[1]/1000000,color='black',linewidth=2)
+    ax.plot(plot_data.Lower_CI_XY[0],plot_data.Lower_CI_XY[1]/1000000,color='lightsteelblue')
+
+    ax.plot(plot_data.Upper_CI_XY[0],plot_data.Upper_CI_XY[1]/1000000,color='lightsteelblue')
+    ax.plot(plot_data.Lower_PI_XY[0], plot_data.Lower_PI_XY[1]/1000000,color='plum')
+
+    ax.plot(plot_data.Upper_PI_XY[0], plot_data.Upper_PI_XY[1]/1000000,color='plum')
+
+    customlegend = [Line2D([0], [0], color='black', lw=4), Line2D([0], [0], color='plum', lw=4),Line2D([0], [0], color='lightsteelblue', lw=4),Line2D([0], [0], marker='o', color='black', label='Scatter',
+                          markerfacecolor='black', markersize=10)]
+    ax.legend(customlegend, ["Regression", "Prediction Interval","Confidence Interval","Mean"])
+
+
+
+    app.queueFunction(app.refreshPlot, "p1")
 
 def Grouped_charge_histogram(df):
     # Let's make a plot
@@ -381,25 +478,35 @@ def meanSlopevsCharge3std(dict_meansvsstd):
 
     app.queueFunction(app.refreshPlot, "p1")
 def QQPlot(df,charge=37):
+
+
+
     # We need a plot of the difference between means! Basically, the standard error of the summed observed slopes needs to be
     # less than the difference between means of two charge states. this difference is constant over the linear range, so we
     # only need to take the average difference and reduce our standard error below that.
+
+
+
+
     fig.clf()
     ax = fig.add_subplot()
     # QQ Plots for specific charge states
     data = df.loc[df['Charge']==charge, 'Slope']
 
     stats.probplot(data, plot=ax)
+
+    shaperoTest = stats.shapiro(data)
+    ks_statistic, p_value = stats.kstest(data, 'norm')
+
     ax.set_title('QQ Plot Charge: {0}'.format(charge), size=title_text_size)
     ax.set_xlabel("Theoretical Quantiles",size = axis_text_size)
     ax.set_ylabel("Ordered Values", size=axis_text_size)
     ax.tick_params(axis='y', labelsize=tick_text_size)
     ax.tick_params(axis='x', labelsize=tick_text_size)
-    ax.text(0,max(data) - (max(data)- min(data)),"Total number of points: {0}".format(data.count()))
+    ax.text(0,max(data) - (max(data)- min(data)),"Total number of points: {0} \n Shapiro-Wilk test p Value {1}\n Kolmogorov Smirnov test p Value {2}".format(data.count(),shaperoTest.pvalue,p_value))
     app.queueFunction(app.refreshPlot, "p1")
 
     # In general across most of the range the data is normally distributed. Some charge states break down more than others.
-
 
 def treeclick(title,atr):
     selected = app.getTreeSelected("tree1")
@@ -411,7 +518,8 @@ def treeclick(title,atr):
 
         except:
             ""
-
+        if selected[0] == 'test':
+            print("ha")
         if selected[0] == "meanSlopeVsCharge":
             app.thread(meanSlopevsCharge3std,dict_meansvsstd)
 
@@ -434,9 +542,12 @@ def treeclick(title,atr):
 
             app.thread(twoDhist, df)
 
+        if selected[0] == "Violin_Slope_dist":
+            app.thread(Violin_Slope_dist, df)
+
 def openTree(xml):
 
-    with app.frame("Left", row=0, column=0):
+    with app.panedFrame("Left",row=0,column=0):
 
         app.tree("tree1", xml, dbl=treeclick, editable=False)
 
@@ -462,6 +573,12 @@ def load_data(basepath):
     dirname = basepath.split("/")[-1]
     CreateDF(basepath)
 
+
+    """    charge = df['Charge']
+    slope = df['Slope']
+    with open("C:\Data\BOB\othercalibrationfolders\SlopevsCharge_{0}.csv".format(dirname),"w") as filewrite:
+        for i in range(len(charge)):
+            filewrite.write("{0},{1}\n".format(slope[i],charge[i]))"""
 
     charge_groups = getChargeGroups(df)
 
@@ -494,7 +611,7 @@ def load_data(basepath):
     xml = """
             <{0}>
             <Histograms><Grouped_charge_histogram></Grouped_charge_histogram>
-            <twoDHistogram></twoDHistogram><Grouped_charge_histogram_norm></Grouped_charge_histogram_norm></Histograms>
+            <Grouped_charge_histogram_norm></Grouped_charge_histogram_norm><Violin_Slope_dist></Violin_Slope_dist></Histograms>
             {2}
             <ChargeVsSlope></ChargeVsSlope>
             <Mean_Vs_std></Mean_Vs_std>
@@ -550,6 +667,80 @@ def applypress(button):
             app.errorBox("Input Error","Input must be an integer")
 
 
+class Click_and_drag():
+    def __init__(self,fig, func):
+
+        self.fig = fig
+        self.ax = self.fig.axes[0]
+        self.func = func
+        self.press = False
+
+
+        self.c1 = self.ax.figure.canvas.mpl_connect('button_press_event', self.onpress)
+        self.c2 = self.ax.figure.canvas.mpl_connect('button_release_event', self.onrelease)
+        self.selected_min_x = 0
+        self.selected_max_x = 0
+        self.selected_min_y = 0
+        self.selected_max_y = 0
+
+        print("connecting...")
+
+    def onclick(self, event):
+
+        if self.selected_min_x > 0 and self.selected_max_x > 0:
+            self.ax = self.fig.axes[0]
+            x_lims = sorted([self.selected_max_x,self.selected_min_x])
+
+            X = self.ax.lines[0].get_xdata()
+            Y = self.ax.lines[0].get_ydata()
+
+            index = 0
+            start_index = 0
+            end_index = 0
+            while index < len(X):
+                if x_lims[0] < X[index] and start_index == 0:
+                    start_index = index
+                    print(start_index)
+                elif x_lims[1] < X[index] and end_index == 0:
+                    end_index = index
+                    print(end_index)
+                index += 1
+            print(Y[start_index:end_index])
+            y_min = min(Y[start_index:end_index])
+            y_max = max(Y[start_index:end_index])
+            self.ax.set_ylim(y_min,y_max)
+            self.ax.set_xlim(x_lims[0], x_lims[1])
+            self.ax.figure.canvas.draw_idle()
+
+    def onpress(self, event):
+
+
+        if event.button == 1:
+
+            self.click_time = time.clock()
+            self.press = True
+            if event.xdata != None:
+                self.selected_min_x = event.xdata
+
+        else:
+            self.ax.autoscale()
+
+            self.ax.figure.canvas.draw_idle()
+
+    def onrelease(self, event):
+
+            if self.press == True and time.clock()-self.click_time > 1:
+                self.onclick(event)
+                self.press = False
+                if event.xdata != None:
+                    self.selected_max_x = event.xdata
+
+
+def func(event):
+    print(event.xdata, event.ydata)
+
+
+
 if __name__ == '__main__':
     progress = 0
     dict_key_map = []
@@ -587,9 +778,14 @@ if __name__ == '__main__':
 
 
     # Create Empty matplotlib plot
-    with app.frame("Right", row=0, column=1,colspan=5,sticky='nwse',stretch='both'):
+    with app.panedFrame("Right",row=0,column=1):
 
         fig = app.addPlotFig("p1", showNav=True)
+        ax = fig.add_subplot()
+        #click = Click_and_drag(fig,func)
+
+
+
 
 
 
@@ -622,3 +818,4 @@ if __name__ == '__main__':
 
 
     app.go()
+
